@@ -1,0 +1,837 @@
+---
+title: "DA5030.Proj.Sui"
+author: "Xin (Sue) Sui"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+```{r}
+set.seed(1)
+rnorm
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+install.packages("tidyverse")
+# Load required packages:
+library("tidyverse")
+library("psych")
+library("caret")
+library("e1071")
+#install.packages("ROCR")
+library("ROCR")
+library("OneR")
+library("gmodels")
+library("e1071")
+library("C50")
+library("class")
+#install.packages("neuralnet")
+library("neuralnet")
+#install.packages("arules")
+library("arules")
+#install.packages("caTools")
+library("caTools")
+library("stats")
+#install.packages("factoextra")
+library("factoextra")
+library("reshape2")
+#install.packages("caretEnsemble")
+library("caretEnsemble")
+#install.packages("ipred")
+library("ipred")
+#install.packages("adabag")
+library("adabag")
+library("pROC")
+#install.packages("FactoMineR")
+library("FactoMineR")
+#install.packages("MLmetrics")
+library("MLmetrics")
+```
+
+# CRISP-DM Business Understanding---------------------------------------------------
+Bank churning is defined as movement of customers from one bank to another due to several reasons such as: low interest rates and fees, customer service, latest technology, store hours and locations. As we know, it is more costly to sign in new clients than retaining an existing one. By the time customers churn, banks lose money and it is too late to know the reason. 
+
+The goal is to build a model to predict whether a customer will churn or not based on customers' background and financial status.
+
+- Predict whether a customer will churn or not.
+- Help banks determine and develop a churn prevention plan to prevent customers from churning.
+- Reduce loses to banks.
+- Better serve customers and retain them.
+
+
+# CRISP-DM Data Understanding--------------------------------------------------------
+## 1. Data Acquisition: 
+##  - acquisition of data (e.g., CSV or flat file)
+
+This is the data set used in the section "ANN (Artificial Neural Networks)" of the Udemy course from Kirill Eremenko (Data Scientist & Forex Systems Expert) and Hadelin de Ponteves (Data Scientist), called Deep Learning A-Z™: Hands-On Artificial Neural Networks.
+
+This data was obtained from Kaggle: https://www.kaggle.com/adammaus/predicting-churn-for-bank-customers
+
+```{r, Data Acquisition}
+# 1. Load the data into dataframe
+df <- read.csv("Churn_Modelling.csv", header = TRUE, stringsAsFactors = TRUE)
+```
+
+
+
+## 2. Data Exploration:
+## - Exploratory data plots
+## - Detection of outliers
+## - Correlation/collinearity analysis
+```{r, Data Exploration}
+# 1. Check data
+head(df)
+str(df)
+summary(df)
+table(df$Exited)
+# Has 10000 observations and 14 variables (11 are usable)
+
+# Note: RowNumber, CustomerID and Surname are not useable, and will be eliminated
+# Numerical features: CreditScore, Age, Tenure, Balance,  NumOfProducts, EstimatedSalary
+# Categorical features: Geography, Gender, HasCrCard, isActiveMember and Exited
+
+numeric <- c("CreditScore", "Age", "Tenure", "Balance", "NumOfProducts", "EstimatedSalary")
+categorical <- c("Geography", "Gender", "HasCrCard", "IsActiveMember", "Exited")
+
+
+# 2. Check for missing and NA values, there are none
+sum(is.na(df))
+length(which(df == "?"))
+length(which(df == "NA"))
+length(which(df == "N/A"))
+
+
+
+# 3. Check for outliers
+# Create z-score standarzation function.
+z_normalize <- function(x) {
+  return ((x - mean(x)) / sd(x)) 
+}
+
+# Normalize the numerical features.
+numeric <- df[c(4,7:10,13)]
+norm <- apply(numeric, 2, z_normalize)
+
+# Find the outliers (outliers are considered 3 standard deviations away from the mean).
+outliers <- abs(norm) > 3
+sum(outliers) # 201 outliers
+outliers_column <- which(apply(outliers, 1, function(x) sum(x)!=0))
+
+
+# 4. Check for correlation and collinearity:
+pairs.panels(numeric)
+
+
+# Comment: In the my dataset, there are no missing values. If there were missing data and not much, I would remove them and state it. If there were a lot of missing data, I would impute them with either a value between min and max, but this might cause high variance and poor fit. Or impute with average, or median of similar data by clustering. There are 201 outliers which I will remove which might increase variability when training the models. The algorithms I plan to use are Naive Bayes, Decision Trees, Neural Network and SVM, removing the outliers will help improve model performance overall. Since none of the four models I will be building are statistical learners, following a Gaussian distribution for the data is not required. 
+```
+
+
+
+# CRISP-DM Data Understanding and Data Preparation------------------
+## 1. Data Cleaning & Shaping:
+## - Data imputation
+## - Normalization/standardization of feature values
+## - Feature engineering: dummy codes
+## - Feature engineerring: PCA
+## - Feature engineering: new derived features
+
+```{r, Data Cleaning and Shaping, tidy=TRUE}
+# Data cleaning
+
+# 1. Check for useful features:
+# First three columns are unique row number, customer id and their surname, I will exclude from the data.
+df <- df[c(-1:-3)]
+
+
+# 2. Convert categorical features to factors
+df$Exited <- ifelse(df$Exited==0, "no", "yes")
+df[categorical] <- lapply(df[categorical], factor)
+head(df)
+
+
+# 3. Data imputation: Remove outliers
+df <- df[c(-outliers_column),]
+
+
+
+# Data shaping: Here I will shape the data based on each model I use, some require normalization of numerical features; some require conversion to catergorical features; some require conversion to numerical features.
+
+# 4. Normalization/standarzation of feature values:
+
+# 4.1 Normalization: Normalize for Neural Network (min-max) it works best when input data are scaled.
+numeric <- c("CreditScore", "Age", "Tenure", "Balance", "NumOfProducts", "EstimatedSalary")
+normalize <- function(x) {
+  return((x - min(x))/(max(x) - min(x))) }
+nn_norm <- as.data.frame(lapply(df[numeric], normalize))
+
+nn_df <- cbind(nn_norm, y=df$Exited)
+
+
+# 4.3 Normalization: Normalize for SVM (min-max): it works best when input data are scaled.
+normalize <- function(x) {
+  return((x - min(x))/(max(x) - min(x))) }
+svm_norm <- as.data.frame(lapply(df[numeric], normalize))
+
+
+
+# 5. Feature engineering:
+
+# 5.1 Dummy code categorical features to numeric for SVM
+dum <- df[categorical] %>% select(-Exited)
+dmy <- dummyVars("~.", dum)
+svm_dmy <- data.frame(predict(dmy, newdata = dum))
+
+svm_final_df <- cbind(svm_norm, svm_dmy, y=df$Exited)
+
+
+# 5.2 New derived features for Naive Bayes by binning as it uses only categorical features
+nb_df <- df
+nb_df$CreditScore <-  bin(nb_df$CreditScore, nbins = 5, labels = c("1", "2", "3", "4", "5"))
+nb_df$Age <- bin(nb_df$Age, nbins = 5, labels = c("1", "2", "3", "4", "5"))
+nb_df$Tenure <- bin(nb_df$Tenure, nbins = 5, labels = c("1", "2", "3", "4", "5"))
+nb_df$Balance <- bin(nb_df$Balance, nbins = 2, labels = c("1", "2"))
+nb_df$NumOfProducts <- bin(nb_df$Tenure, nbins = 4, labels = c("1", "2", "3", "4"))
+nb_df$EstimatedSalary <- bin(nb_df$EstimatedSalary, nbins = 5, labels = c("1", "2", "3", "4", "5"))
+head(nb_df)
+
+
+
+# 5.3. Feature engineering: PCA
+cor_df <- df
+pca_num_df <- cor_df[c("CreditScore", "Age", "Tenure", "Balance", "NumOfProducts", "EstimatedSalary")]
+pca_num <- apply(pca_num_df, 2, function(x) as.numeric(as.character(x))) # Convert to all numbers
+
+cor_num <-cor(pca_num)
+
+ggplot(data = melt(cor_num), aes(Var1, Var2, fill = value)) +
+  geom_tile(colour = "white") +
+  scale_fill_viridis_c(name = "correlation index") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_discrete(labels = abbreviate) # Age
+
+pca_numeric <- prcomp(pca_num_df, center = TRUE, scale = TRUE)
+summary(pca_numeric)
+
+# In this case, I did PCA on numerical features and found that Credit Score and Age are the important two factors, they explain about 40% of the total variation in the data.
+```
+
+
+
+
+# CRISP-DM Data Modeling-----------------------------------------------------------
+
+### In This section, holdout method is used to construct four different models, and each model is tuned to see whether or not it improves performance. Models built are then used to predict test data set and accuracy is calculated.
+
+
+## Model Construction:
+
+## 1. Creation of training & validation subsets
+## 2. Construction of at least three related models:
+      2.1 - Neural Network (Parametric)
+      2.2 - Decision Trees (Non-parametric)
+      2.3 - Support Vector Machine (Parametric)
+      2.4 - Naive Bayes (Parametric)
+      
+### 2.1 - I chose Neural Network because it can be used for both regression and classification.
+
+### 2.2 - I chose SVM because it is good for binary classification, it attempts to find a hyper-plane separating the different classes of the training instances, with the maximum error margin. 
+
+### 2.3 - I choose Decision Trees because it doesn't require transformation of data and accepts both categorical and numerical features, it is very simple, fast and efficient.
+
+### 2.4 - I choose Naive Bayes as a comparison to the previous three and see how binning the numerical features perform in the overall model. 
+ 
+## 1. Creation of training & validation subsets
+```{r, Data Modeling, tidy=TRUE}
+# set.seed for reproducibility.
+set.seed(123)
+
+# Hold out method using stratified holdout sampling:
+split <- createDataPartition(df$Exited, p = 0.75, list = FALSE)
+
+training <- df[split,]
+testing <- df[-split,]
+
+table(training$Exited) %>% prop.table
+table(testing$Exited) %>% prop.table
+```
+
+
+## 2.1. Construction of Neural Network
+```{r, Neural Network, tidy=TRUE}
+set.seed(123)
+
+# 1. Split the data (Holdout method)
+train <- nn_df[split,]
+test <- nn_df[-split,]
+
+# 2. Construct Neural Network classifier (for binary classification, act.fct = logistic is used here)
+nn <- neuralnet(y ~ ., data = train, hidden = 1, linear.output = FALSE, 
+                     err.fct = "ce",
+                     act.fct = "logistic",
+                     likelihood = TRUE)
+
+plot(nn, rep = 'best')
+
+result <- compute(nn, test[-7])
+nn_prediction <- as.factor(ifelse(result$net.result[,1] < 0.5, "yes", "no"))
+
+confusionMatrix(nn_prediction, test$y, mode = "prec_recall")
+# Accuracy : 0.7991
+# Precision : 0.8251          
+# Recall : 0.9505
+# F1 : 0.8834
+
+# Accuracy: measure of all the correctly identified cases.
+# Precision: measure of the correctly identified positive cases from all the predicted positive cases.
+# Recall: measure of the correctly identified positive cases from all the actual positive cases.
+# F-score: measure of test accuracy. It combines both the precision and the recall using the harmonic mean, it describes the model performance. It gives a better measure of the incorrectly classified cases than the Accuracy Metric.
+
+
+# AUC-------------------------------------------------------------------------------------
+prob_nn <- result$net.result
+colAUC(prob_nn, test$y)
+colAUC(prob_nn, test$y, plotROC = TRUE)
+
+auc_nn <- roc(response=test$y, predictor=result$net.result[,1])
+plot(auc_nn)
+
+auc_nn$auc # 74.85%
+
+
+# Comment: Here I choose to use all numeric features from the data to build neural network classifier because the with the the rest of categorical features, the computer runs so much and takes up all the CPU and takes a very long run time. (I've tried to use both numerical and categorical features, but the has a very long run time and uses a lot of computer memory). According to the book and Professor's notes, Neural Network can take in both numerical and categorical features and automatically converts them to dummy code, and assigns bias and weights to each input and back-propagates, it is considered as a black box, NP-complete problem which takes an exponential amount of time to run with the amount of input data, it takes up all the CPU and very computationally expensive. I will demonstrate tuning parameter for Neural Network in the following k-fold cross validation step. Accuracy for improved model is 83.54%, F-score is 88.34% and AUC is 80.15%.
+```
+
+
+## 2.2. Construction of Support Vector Machine
+```{r, SVM}
+set.seed(123)
+
+# Hold out method using stratified holdout sampling:
+split <- createDataPartition(df$Exited, p = 0.75, list = FALSE)
+
+train <- svm_final_df[split,]
+test <- svm_final_df[-split,]
+
+
+svm_classifier_l <- svm(y ~ ., data = train, kernel="linear", scaled = TRUE, probability = TRUE)
+
+pred_svm_l <- predict(svm_classifier_l, test[-16], decision.values = TRUE, probability = TRUE)
+
+svm_prediction_l <- predict(svm_classifier_l, test[-16], type = "prob") 
+
+
+confusionMatrix(svm_prediction_l, test$y, mode = "prec_recall")
+# Accuracy : 0.8003 
+# Precision : 0.8003         
+# Recall : 1.0000
+
+
+# Improvement with kernel = radial
+svm_classifier_k <- svm(y ~ ., data = train, kernel="radial", scaled = TRUE, probability = TRUE)
+
+pred_svm_k <- predict(svm_classifier_k, test[-16], decision.values = TRUE, probability = TRUE)
+
+svm_prediction_k <- predict(svm_classifier_k, test[-16], type = "prob") 
+
+confusionMatrix(svm_prediction_k, test$y, mode = "prec_recall")
+# Accuracy : 0.8579 
+# Precision : 0.8627          
+# Recall : 0.9781
+# F1 : 0.9168 
+
+
+# AUC--------------------------------------------------------------------------------------------
+prob_svm_k <- attr(pred_svm_k, "probabilities")
+
+colAUC(prob_svm_k, test$y)
+colAUC(prob_svm_k, test$y, plotROC = "TRUE")
+
+auc_svm_k <- roc(response=test$y, predictor=prob_svm_k[,1])
+plot(auc_svm_k)
+auc_svm_k$auc # 81.08%
+
+
+# Comment: I chose SVM because it is mostly understood when used for binary classication. It is a distance based algorithm, it creates a flat boundary known as hyperplane which divides the space to create farily homogeneous partitions on either side. It combines kNN and linear gressions. It is very powerful, and and model highly complex relationships. SVM model did improve after setting the kernal to radial, as linear did not perform as well. Radial works better here because the underlying data is not linearly separable. After model improvement, the accuracy is 85.79%, F-score is 91.68% and AUC is 81.08% which is the second highest compare to models previously built.
+```
+
+
+## 2.3. Construction of Decision Trees
+```{r, Decision Trees}
+# Decision Trees:
+# Training using data frame without dummy code since decision tree takes both categorical and numeric variables.
+decision_tree <- C5.0(training[-11], training$Exited)
+summary(decision_tree)
+
+decision_tree_pred <- predict(decision_tree, testing[-11])
+
+confusionMatrix(testing$Exited, decision_tree_pred, mode = "prec_recall")
+# Accuracy : 0.8612 
+# Precision : 0.9684          
+# Recall : 0.8722
+# F1: 0.9178
+
+
+# Tuning Improvement------------------------------------------------------------------------
+# Trials = 10 is boosting technique, that the algorithm will stop adding trees if the desired overall error rate is reached or performance no longer improves with additional of trials
+
+decision_tree_10 <- C5.0(training[-11], training$Exited, trials = 10)
+
+decision_tree_pred_10 <- predict(decision_tree_10, testing[-11])
+
+confusionMatrix(testing$Exited, decision_tree_pred_10, mode = "prec_recall")
+# Accuracy : 0.8559
+# Precision : 0.9536          
+# Recall : 0.8771
+# F1 : 0.9178
+# After increasing the number of trials for decision tree, model performance remained the same. 
+
+
+# AUC--------------------------------------------------------------------------------------
+pred_dt <- predict(decision_tree_10, testing[-11], type = "prob")
+
+colAUC(pred_dt, test$y)
+colAUC(pred_dt, test$y, plotROC = TRUE)
+
+auc_dt <- roc(response=test$y, predictor=pred_dt[,1])
+plot(auc_dt)
+
+auc_dt$auc # 84.01%
+
+# Comment: I chose decision tree here because it can handle numeric or categorical features. Decision Trees doesn't need dummy codes for categorical variables as it makes if-then branches; like a tree with many branches. And for numerical features, the split is done with the elements higher than a threshold. The accuracy for improved decision tree is 86.12%, F-score is 92%, AUC is 84.01%, this is so far the best performing model. 
+```
+
+
+## 2.4. Construction of Navie Bayes: 
+```{r, Navie Bayes}
+set.seed(123)
+
+train_nb <- nb_df[split,]
+test_nb <- nb_df[-split,]
+
+
+m1 <- naiveBayes(train_nb[-11], train_nb$Exited)
+pred1 <- predict(m1, test_nb[-11])
+
+confusionMatrix(pred1, test_nb$Exit, mode = "prec_recall")
+# Accuracy : 0.8199
+# Precision : 0.8389         
+# Recall : 0.9592
+
+
+# Improve model with laplace = 1 --------------------------------------------------------
+m2 <- naiveBayes(train_nb[-11], train_nb$Exited, laplace = 1)
+pred2 <- predict(m2, test_nb[-11])
+
+confusionMatrix(pred2, test_nb$Exit, mode = "prec_recall") # 81.99% accuracy rate and kappa score of 0.2817
+# Accuracy : 0.8199
+# Precision : 0.8389         
+# Recall : 0.9592
+# F1 : 0.8950
+
+
+# AUC------------------------------------------------------------------------------------
+pred_nb <- predict(m2, test_nb[-11], type = "raw")
+colAUC(pred_nb, test$y)
+colAUC(pred_nb, test$y, plotROC = TRUE)
+
+auc_nb <- roc(response=test$y, predictor=pred_nb[,1])
+plot(auc_nb)
+
+auc_nb$auc # 78.23%
+
+# Comment: I chose Naive Bayes because it is a probabilistic learner that is used for classification. Naive Bayes accepts only categorical features as it calculates probabilities, so I binned my numerical features. After tuning the Laplace estimator, the model performance remained the same. Accuracy for Naive Bayes improved model is 81.99%, F-score is 89.50% and AUC is 78.23%.
+```
+
+# CRISP-DM Evaluation-----------------------------------------------------------
+## 1. Model Evaluation:
+## - evaluation of fit of models with holdout method
+## - evaluation with k-fold cross-validation
+## - tuning of models
+## - comparison of models
+## - interpretation of results/prediction with interval
+## - construction of stacked ensemble model
+```{r, Evaluation of Holdout Method}
+# According to the above holdout methods of 4 methods:
+# 1. Decision Trees:  Accuracy : 0.8559    Precision : 0.9536    Recall : 0.8771   F1 : 0.9178
+
+# 2. SVM: Accuracy : 0.8579   Precision : 0.8627    Recall : 0.9781    F1 : 0.9168 
+
+# 3. Neural Network: Accuracy : 0.7991   Precision : 0.8251     Recall : 0.9505   F1 : 0.8834
+
+# 4. Naive Bayes: Accuracy : 0.8199   Precision : 0.8389   Recall : 0.9592   F1 : 0.8950
+
+# Decision Tree model has the best performance, following by SVM, Neural Network and Naive Bayes. 
+```
+
+
+### In This section, k-fold cross validation method is used to construct four different models, and each model is tuned to see whether or not it improves performance. Models built are then used to predict test data set and accuracy is calculated.
+
+# 1. Decision Tree
+```{r, Evaluation with k-fold cross-validation: Decision Trees}
+set.seed(1)
+
+# Decision Trees CV and Tuning
+
+# 1. Evaluation of k-folds cross-validation-------------------------------------------
+train <- df[split,]
+test <- df[-split,]
+
+# Create a control object that uses 10-fold cross validation
+ctrl <- trainControl(method="cv", number=10, classProbs = TRUE)
+
+dtFit_cv <- train(Exited ~ ., data = train, method = "C5.0", trControl = ctrl, preProcess = c("center","scale"))
+
+dtFit_cv # Best model is trials = 20, model = rules and winnow = FALSE.
+plot(dtFit_cv)
+
+# Predict testing set
+p_dt <- predict(dtFit_cv, test[-11])
+confusionMatrix(p_dt, test$Exited, mode = "prec_recall")
+# Accuracy : 0.8599 
+# Precision : 0.8794          
+# Recall : 0.9561 
+
+
+# 2. Tuning of model-------------------------------------------------------------------
+dtGrid <- expand.grid(model="tree", trials = c(1:20), winnow = FALSE)
+
+dtFit_tune <- train(Exited ~ ., data = train, 
+                    method = "C5.0", metric = "ROC", 
+                    preProc = c("center", "scale"),
+                    trControl = ctrl, tuneGrid = dtGrid)
+dtFit_tune # After tunning, best model is trials = 19, model = tree and winnow = FALSE
+plot(dtFit_tune)
+
+p_dt_tune <- predict(dtFit_tune, test[-11]) # 
+
+confusionMatrix(p_dt_tune, test$Exited, mode = "prec_recall")
+# Accuracy : 0.8587
+# Precision : 0.8778          
+# Recall : 0.9566 
+# F1 : 0.9162
+
+
+# 3. AUC------------------------------------------------------------------------------------
+pred_dt_cv <- predict(dtFit_tune, test[-11], type = "prob")
+colAUC(pred_dt_cv, test$Exited)
+colAUC(pred_dt_cv, test$Exited, plotROC = TRUE)
+
+auc_dt <- roc(response=test$Exited, predictor=pred_dt_cv[,1])
+plot(auc_dt)
+
+auc_dt$auc # AUC 85.57%
+
+# Comment: k-fold cross validation did improve the model performance compare to holdout method. Tuning the parameters did not improve the k-fold cross validation method.
+```
+
+# 2. SVM
+```{r, Evaluation with k-fold cross-validation: SVM}
+set.seed(1)
+
+# SVM CV and Tuning
+
+# 1. Evaluation of k-folds cross-validation-------------------------------------------
+train <- svm_final_df[split,]
+test <- svm_final_df[-split,]
+
+# Create a control object that uses 10-fold cross validation
+ctrl <- trainControl(method="cv", number=10, classProbs = TRUE)
+
+svmFit_cv <- train(y~ ., data = train, method = "svmRadial", 
+                   trControl = ctrl, preProcess = c("center","scale"))
+
+svmFit_cv # Cost parameter = 1.00  accuracy = 0.8527891 kappa = 0.4137305
+plot(svmFit_cv)
+
+# Predict testing set
+p_svm <- predict(svmFit_cv, test[-16])
+confusionMatrix(p_svm, test$y, mode = "prec_recall")
+# Accuracy : 0.8579 
+# Precision : 0.8608          
+# Recall : 0.9811
+
+
+# 2. Tuning of model-------------------------------------------------------------------
+
+svmFit_tune <- train(y ~ ., data = train, method = "svmRadial", 
+                     trControl = ctrl, preProcess = c("center","scale"), 
+                     metric = "ROC", tuneLength = 5, mode = "prec_recall")
+
+svmFit_tune # After tuning best model is Cost parameter = 2  accuracy = 0.8552371  kappa = 0.4533225
+plot(svmFit_tune)
+
+# Predict testing set
+p_svm_tune <- predict(svmFit_tune, test[-16])
+confusionMatrix(p_svm_tune, test$y, mode = "prec_recall")
+# Accuracy : 0.8591 
+# Precision : 0.8682          
+# Recall : 0.9714          
+# F1 : 0.9169  
+
+# 3. AUC------------------------------------------------------------------------------------
+pred_svm_cv <- predict(svmFit_tune, test[-16], type = "prob")
+colAUC(pred_svm_cv, test$y)
+colAUC(pred_dt_cv, test$y, plotROC = TRUE)
+
+auc_svm <- roc(response=test$y, predictor=pred_svm_cv[,1])
+plot(auc_svm)
+
+auc_svm$auc # AUC 81.07%
+
+
+# Comment: k-fold cross validation did not improve the model performance compare to holdout method. Tuning the parameters did improve the k-fold cross validation method. 
+```
+
+
+# 3. Neural Network
+```{r, Evaluation with k-fold cross-validation: Neural Network}
+set.seed(1)
+
+# Neural Network CV and Tuning
+
+# 1. Evaluation of k-folds cross-validation-------------------------------------------
+train <- nn_df[split,]
+test <- nn_df[-split,]
+
+# Create a control object that uses 10-fold cross validation
+ctrl <- trainControl(method="cv", number=10, classProbs = TRUE)
+
+nnFit_cv <- train(y ~ ., data = train, method = "nnet", metric = "ROC",
+                  trControl = ctrl, preProcess = c("center","scale"))
+
+nnFit_cv # Best model is size = 5 and decay = 1e-04 accuracy 84.08%
+
+# Predict testing set
+p_nn <- predict(nnFit_cv, test[-7])
+confusionMatrix(p_nn, test$y, mode = "prec_recall")
+# Accuracy : 0.8297
+# Precision : 0.8672          
+# Recall : 0.9296
+
+
+
+# 2. Tuning of model-------------------------------------------------------------------
+nnetGrid <-  expand.grid(size = seq(from = 1, to = 3, by = 1), # Number of nodes
+                        decay = seq(from = 0.1, to = 0.2, by = 0.1))
+
+nnFit_tune <- train(y ~ ., data = train, method = "nnet", 
+                     trControl = ctrl, preProcess = c("center","scale"), 
+                     metric = "ROC", tuneGrid = nnetGrid)
+
+nnFit_tune # After tunning, best model is size = 3 and decay = 0.2  Accuracy is 83.86% and Kappa = 0.4097141
+plot(svmFit_tune)
+
+# Predict testing set
+p_nn_tune <- predict(nnFit_tune, test[-7])
+confusionMatrix(p_nn_tune, test$y, mode = "prec_recall")
+# Accuracy : 0.8338
+# Precision : 0.8647          
+# Recall : 0.9393 
+
+# 3. AUC------------------------------------------------------------------------------------
+pred_nn_cv <- predict(nnFit_tune, test[-7], type = "prob")
+colAUC(pred_nn_cv, test$y)
+colAUC(pred_nn_cv, test$y, plotROC = TRUE)
+
+auc_nn <- roc(response=test$y, predictor=pred_nn_cv[,1])
+plot(auc_dt)
+
+auc_nn$auc # AUC 81.63%
+
+# Comment: k-fold cross validation did improve the model performance compare to holdout method. Tuning the parameters did improve the holdout method. 
+```
+
+
+# 4. Naive Bayes
+```{r, Evaluation with k-fold cross-validation: Naive Bayes}
+# Naive Bayes CV and Tuning
+
+# 1. Evaluation of k-folds cross-validation-------------------------------------------
+
+train <- nb_df[split,]
+test <- nb_df[-split,]
+
+
+nbFit_cv <- train(Exited ~ ., data = train, method = "nb", trControl = ctrl)
+
+nbFit_cv
+plot(nbFit_cv)
+
+# Predict testing set
+p_nb <- predict(nbFit_cv, test[-11])
+confusionMatrix(p_nb, test$Exited, mode = "prec_recall")
+# Accuracy : 0.8003
+# Precision : 0.8003         
+# Recall : 1.0000
+
+
+# Comment: Naive Bayes did not perform well, it has a sensitivity of 0, I did not perform a tuning and cross validation for it as it did not improve anything and taking a very long time to run. The cross validation result and holdout method produced the same result.
+```
+## Evaluation of k-fold cross validation, not surprisingly, Decision Tree model again out performed the other models with 86% accuracy, precision of 87.78%, recall of 95.66% and F-score of 91.62% and AUC of 85.57%, follow by SVM with accuracy of 85.91%, precision of 86.82%, recall of 97.14%, F-score of 91.69% and AUC of 81.07%, follow by Neural Network with 83.38%, precision of 86.47%, recall of 93.93% and F-score of  90.05% and AUC of 81.63%. Naive Byes again performed the worst. I will exclude it from the Stacking Ensemble model. 
+
+
+
+## In this section, Stacking Ensemble of top three performing models: Decision Tree, SVM and Neural Network are stacked to build an ensemble model. And Bagging Ensemble for Decision Tree is built. The Goal is to compare bagging ensemble of Decision Tree and Stacked Ensemble model of Decision Trees, SVM and Neural Network
+
+## Construction of Stacking Ensemble Model and AUC Evaluation
+```{r, Construction of Stacking Ensemble model}
+set.seed(1)
+
+train <- df[split,]
+test <- df[-split,]
+
+# Example of Stacking algorithms
+# create submodels
+control <- trainControl(method="cv", number=5, savePredictions = "final", classProbs=TRUE)
+
+algorithmList <- c('C5.0', 'svmRadial', 'nnet')
+
+
+# Stacking Algorithms - Run multiple algorithms in one call.
+models <- caretList(Exited ~., data=train, trControl=control, methodList=algorithmList)
+
+results <- resamples(models)
+summary(results)
+dotplot(results)
+# Comment: As we can see decision tree has the highest performance in the ensemble model.
+
+
+
+ensemble_1 <- caretEnsemble(models, 
+                            metric = "ROC", 
+                            trControl = control)
+summary(ensemble_1)
+plot(ensemble_1)
+# From the plot, we can see that C5.0 has the best performance.
+
+
+# Combine the predictions of multiple models to form a final prediction.
+
+# Ensemble the predictions of `models` to form a new combined prediction based on glm.
+stack.glm <- caretStack(models, method = "glm", metric="Accuracy", trControl=control)
+
+print(stack.glm)
+
+pred_ensemble <- predict(stack.glm, test[-11])
+
+confusionMatrix(pred_ensemble, test$Exited, mode = "prec_recall")
+# Accuracy : 0.8599 
+# Precision : 0.8812          
+# Recall : 0.9536
+# F1 : 0.9160
+
+
+
+# AUC-------------------------------------------------------------------------------------
+pred_stack <- predict(stack.glm, test[-11], type = "prob")
+colAUC(pred_stack, test$Exited)
+colAUC(pred_stack, test$Exited, plotROC = TRUE)
+
+auc_nb <- roc(response=test$Exited, predictor=pred_stack)
+plot(auc_nb)
+
+auc_nb$auc # 85.71% 
+
+# Comment: My stacked ensemble improved performance on average, it is the best performing model. 
+```
+
+
+## Use Boostrap and aggregating: Decision Tree Bagging and AUC Evaluation
+
+### Bagging: generates a number of training dataset by bootstrap sampling the original training data. These data sets then then used to generate a set of models using a single learning algorithm, here will be Decision Tree. The models' predictions are combined using voting for classification or averaging for numeric prediction. Similar to bagging, boosting also resamples the training data, except it generates complimentary learners and assigns weights, the ones with better performance have greater weights over the ensemble's final prediction. 
+```{r, Construction of Bagging Ensemble model}
+# Top three strong learners
+# Bagging and boosting works well with decision tree models, here I chose bagging. 
+set.seed(1)
+ctrl <- trainControl(method = "cv", number = 5) # by number of decision trees voting in the ensemble
+bag <- train(Exited ~ ., data = training, method = "treebag", trControl = ctrl)
+
+pred_bag <- predict(bag, testing[-11])
+confusionMatrix(pred_bag, testing$Exited, mode = "prec_recall")
+# Accuracy : 0.8526 
+# Precision : 0.8820          
+# Recall : 0.9418
+# F1: 0.9109
+
+# AUC-------------------------------------------------------------------------------------
+pred_bag_auc <- predict(bag, testing[-11], type = "prob")
+colAUC(pred_bag_auc, testing$Exited)
+colAUC(pred_bag_auc, testing$Exited, plotROC = TRUE)
+
+auc_bag <- roc(response=testing$Exited, predictor=pred_bag_auc[,1])
+plot(auc_bag)
+
+auc_bag$auc # AUC 82.28%
+```
+
+
+### In conclusion, Stacked Ensemble model performed the best, it has an accuracy of 86% precision of 88.12%, recall of 95.36% and F-score of 91.60% and AUC of 85.71%. Decision tree model alone which is very close to the stacked ensemble model with accuracy of 86.12% and precision of 96.84% and recall of 87.22% and F-score of 91.78% and AUC of 84.01%, is the second best performing model. In my case, depends on the computer and its heuristic running methond, both Stacked Ensemble model and Decision Tree base model alone performed equally well. Out of the four models built, Naive Bayes performed the worst, a lesson I learned here is perhaps kmeans should be used for clustering before binning to get the the optimal bin boundaries.
+
+
+# CRISP-DM Deployment-----------------------------------------------------------
+### - According to the model prediction, about 86.12% accuracy, banks could use this prediction to predict whether a customer will churn or not. 86.12% will correctly predict churn movement. 
+
+### - Bank could save money in the long run by targeting which type of customers to keep.
+### - Helps bank to develop loyalty programs and retention campaigns to keep as many customers as possible.
+
+
+
+## References
+
+Machine Learning with R, Third Edition, Brett Lantz
+
+https://www.dataquest.io/blog/top-10-machine-learning-algorithms-for-beginners/
+
+http://www.sthda.com/english/articles/38-regression-model-validation/157-cross-validation-essentials-in-r/
+
+https://topepo.github.io/caret/train-models-by-tag.html#boosting
+
+https://www.saedsayad.com/k_nearest_neighbors.htm
+
+https://medium.com/@eijaz/holdout-vs-cross-validation-in-machine-learning-7637112d3f8f
+
+https://machinelearningmastery.com/machine-learning-ensembles-with-r/
+
+https://rpubs.com/njvijay/16444
+
+https://topepo.github.io/caret/model-training-and-tuning.html
+
+https://www.wright.edu/center-for-teaching-and-learning/blog/article/creating-easy-narrated-screen-recordings-on-almost-any-mac
+
+https://cran.r-project.org/web/packages/caretEnsemble/vignettes/caretEnsemble-intro.html
+
+https://blog.revolutionanalytics.com/2015/10/the-5th-tribe-support-vector-machines-and-caret.html
+
+https://uc-r.github.io/naive_bayes
+
+https://machinelearningmastery.com/machine-learning-ensembles-with-r/
+
+https://topepo.github.io/caret/available-models.html
+
+https://rpubs.com/zxs107020/370699 CaretList and CaretStack
+
+http://danlec.com/st4k#questions/49725934
+
+https://towardsdatascience.com/a-comprehensive-machine-learning-workflow-with-multiple-modelling-using-caret-and-caretensemble-in-fcbf6d80b5f2
+
+https://www.neuraldesigner.com/learning/examples/bank-churn
+
+https://datascience.stackexchange.com/questions/17146/does-ensemble-bagging-boosting-stacking-etc-always-at-least-increase-perfor
+
+https://stats.libretexts.org/Bookshelves/Computing_and_Modeling/RTG%3A_Classification_Methods/4%3A_Numerical_Experiments_and_Real_Data_Analysis/Preprocessing_of_categorical_predictors_in_SVM%2C_KNN_and_KDC_(contributed_by_Xi_Cheng)
+
+https://subscription.packtpub.com/book/big_data_and_business_intelligence/9781788397872/1/ch01lvl1sec27/pros-and-cons-of-neural-networks
+
+https://medium.com/analytics-vidhya/accuracy-vs-f1-score-6258237beca2
+
+https://www.machinelearningplus.com/machine-learning/caret-package/  (one hot encoding, caretStack)
+
+https://www.saedsayad.com/decision_tree_reg.htm (Decision Tree)
+
+https://machinelearningmastery.com/why-one-hot-encode-data-in-machine-learning/ (Integer encoding vs one hot encoding)
