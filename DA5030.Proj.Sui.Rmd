@@ -3,9 +3,9 @@ title: "DA5030.Proj.Sui"
 author: "Xin (Sue) Sui"
 date: "`r Sys.Date()`"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
-  pdf_document: default
 ---
 ```{r}
 set.seed(1)
@@ -18,7 +18,9 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE
 )
-install.packages("tidyverse")
+#install.packages("kernlab")
+library("kernlab")
+#install.packages("tidyverse")
 # Load required packages:
 library("tidyverse")
 library("psych")
@@ -52,6 +54,10 @@ library("pROC")
 library("FactoMineR")
 #install.packages("MLmetrics")
 library("MLmetrics")
+#install.packages("formatR")
+library("formatR")
+
+
 ```
 
 # CRISP-DM Business Understanding---------------------------------------------------
